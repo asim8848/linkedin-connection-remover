@@ -1,0 +1,264 @@
+// Content script automatically injected into LinkedIn connections page
+console.log("LinkedIn Connection Remover v1.2: Debug version loaded");
+console.log("Browser:", navigator.userAgent);
+console.log("URL:", window.location.href);
+
+function startRemovingLinkedInConnections() {
+  console.log("Starting to remove LinkedIn connections");
+
+  // Try multiple possible selectors for LinkedIn connections
+  let connections = document.querySelectorAll('div.mn-connection-card');
+  
+  if (connections.length === 0) {
+    console.log("First selector found no connections, trying alternatives...");
+    connections = document.querySelectorAll('.mn-connections-summary__card');
+  }
+  
+  if (connections.length === 0) {
+    connections = document.querySelectorAll('li.mn-connection-card');
+  }
+  
+  if (connections.length === 0) {
+    connections = document.querySelectorAll('[class*="connection"]');
+    console.log("Using generic connection selector, found:", connections.length);
+  }
+  
+  console.log(`Found ${connections.length} connections`);
+  
+  if (connections.length === 0) {
+    console.error("No connections found! Please check the page structure manually.");
+    return;
+  }
+  
+  let index = 0;
+  let retryCount = 0;
+  const MAX_RETRIES = 3;
+  let removedCount = 0;
+  const DELAY_BETWEEN_CONNECTIONS = 3000; // 3 seconds between connections
+
+  function removeNextConnection() {
+    if (index >= connections.length) {
+      console.log(`Completed processing. Removed ${removedCount} connections.`);
+      return;
+    }
+
+    const connection = connections[index];
+    console.log(`Processing connection ${index + 1} of ${connections.length}`);
+
+    // Try to find the dropdown trigger button using multiple selectors
+    let menuButton = connection.querySelector('button.artdeco-dropdown__trigger');
+    
+    if (!menuButton) {
+      menuButton = connection.querySelector('[class*="dropdown__trigger"]');
+    }
+    
+    if (!menuButton) {
+      menuButton = connection.querySelector('button[aria-label*="actions"]');
+    }
+    
+    if (!menuButton) {
+      const buttons = connection.querySelectorAll('button');
+      for (const btn of buttons) {
+        if (btn.querySelector('svg[aria-label*="More"]') || 
+            btn.textContent.includes('...') ||
+            (btn.getAttribute('aria-label') && 
+             btn.getAttribute('aria-label').toLowerCase().includes('more'))) {
+          menuButton = btn;
+          break;
+        }
+      }
+    }
+    
+    if (!menuButton) {
+      console.log("Menu button not found, skipping connection");
+      index++;
+      retryCount = 0;
+      setTimeout(removeNextConnection, DELAY_BETWEEN_CONNECTIONS);
+      return;
+    }
+
+    // Click the menu button to open dropdown
+    console.log("Clicking dropdown menu button...");
+    menuButton.click();
+    
+    // Wait for the dropdown to be populated
+    setTimeout(() => {
+      const dropdownContents = document.querySelectorAll('.artdeco-dropdown__content--is-open');
+      
+      if (dropdownContents.length === 0) {
+        console.log("No dropdown found, retrying...");
+        if (retryCount < MAX_RETRIES) {
+          retryCount++;
+          setTimeout(removeNextConnection, 1000);
+        } else {
+          console.log("Max retries reached, skipping connection");
+          index++;
+          retryCount = 0;
+          setTimeout(removeNextConnection, DELAY_BETWEEN_CONNECTIONS);
+        }
+        return;
+      }
+      
+      console.log("Dropdown is now populated");
+      
+      // Find the "Remove connection" option in any open dropdown
+      let removeButton = null;
+      
+      for (const dropdown of dropdownContents) {
+        // Try to find buttons or menu items with "remove connection" text
+        const items = dropdown.querySelectorAll('button, a, [role="menuitem"]');
+        console.log(`Found ${items.length} dropdown items`);
+        
+        for (const item of items) {
+          const text = item.textContent.trim().toLowerCase();
+          console.log(`Dropdown item: "${text}"`);
+          
+          if (text.includes('remove connection') || text === 'remove') {
+            removeButton = item;
+            break;
+          }
+        }
+        
+        if (removeButton) break;
+      }
+      
+      if (!removeButton) {
+        console.log("Remove button not found in dropdown");
+        document.body.click(); // Close dropdown
+        
+        if (retryCount < MAX_RETRIES) {
+          retryCount++;
+          console.log(`Retrying (${retryCount}/${MAX_RETRIES})...`);
+          setTimeout(removeNextConnection, 1000);
+        } else {
+          console.log("Max retries reached, skipping connection");
+          index++;
+          retryCount = 0;
+          setTimeout(removeNextConnection, DELAY_BETWEEN_CONNECTIONS);
+        }
+        return;
+      }
+      
+      // Click the remove connection button
+      console.log(`Clicking "Remove connection" button...`);
+      removeButton.click();
+      
+      // Wait for the confirmation dialog
+      setTimeout(() => {
+        // Look for confirmation dialog with multiple approaches
+        let confirmDialog = document.querySelector('[role="alertdialog"]');
+        
+        if (!confirmDialog) {
+          confirmDialog = document.querySelector('.artdeco-modal--layer-confirmation');
+        }
+        
+        if (!confirmDialog) {
+          confirmDialog = document.querySelector('[data-test-modal]');
+        }
+        
+        if (!confirmDialog) {
+          const allDialogs = document.querySelectorAll('.artdeco-modal');
+          // Find the one that mentions "Remove Connection"
+          for (const dialog of allDialogs) {
+            if (dialog.textContent.includes('Remove Connection') || 
+                dialog.textContent.includes('as a connection') ||
+                dialog.textContent.includes('won\'t be notified')) {
+              confirmDialog = dialog;
+              break;
+            }
+          }
+        }
+        
+        if (!confirmDialog) {
+          console.log("Confirmation dialog not found, moving to next connection");
+          index++;
+          retryCount = 0;
+          setTimeout(removeNextConnection, DELAY_BETWEEN_CONNECTIONS);
+          return;
+        }
+        
+        console.log("Found confirmation dialog");
+        
+        // Find the confirm button
+        let confirmButton = confirmDialog.querySelector('[data-test-dialog-primary-btn]');
+        
+        if (!confirmButton) {
+          confirmButton = confirmDialog.querySelector('.artdeco-button--primary');
+        }
+        
+        if (!confirmButton) {
+          // Find any button that says "Remove"
+          const buttons = confirmDialog.querySelectorAll('button');
+          for (const btn of buttons) {
+            if (btn.textContent.trim().toLowerCase() === 'remove') {
+              confirmButton = btn;
+              break;
+            }
+          }
+        }
+        
+        if (!confirmButton) {
+          console.log("Confirmation button not found, moving to next connection");
+          index++;
+          retryCount = 0;
+          setTimeout(removeNextConnection, DELAY_BETWEEN_CONNECTIONS);
+          return;
+        }
+        
+        // Click the confirm button
+        console.log("Clicking confirmation button");
+        confirmButton.click();
+        removedCount++;
+        console.log(`Successfully removed connection ${index + 1}, total removed: ${removedCount}`);
+        
+        // Move to next connection
+        index++;
+        retryCount = 0;
+        setTimeout(removeNextConnection, DELAY_BETWEEN_CONNECTIONS);
+      }, 1000); // Wait 1 second for dialog to appear
+    }, 1000); // Wait 1 second for dropdown to populate
+  }
+
+  // Start the process
+  removeNextConnection();
+}
+
+// Create control button
+function createControlButton() {
+  // Remove any existing buttons
+  const existingButton = document.getElementById('linkedin-connection-remover-btn');
+  if (existingButton) {
+    existingButton.remove();
+  }
+  
+  const button = document.createElement('button');
+  button.id = 'linkedin-connection-remover-btn';
+  button.textContent = 'Remove Connections';
+  button.style.position = 'fixed';
+  button.style.top = '10px';
+  button.style.right = '10px';
+  button.style.zIndex = '9999';
+  button.style.backgroundColor = '#0073b1';
+  button.style.color = 'white';
+  button.style.padding = '10px 15px';
+  button.style.border = 'none';
+  button.style.borderRadius = '4px';
+  button.style.cursor = 'pointer';
+  button.style.fontWeight = 'bold';
+  
+  button.addEventListener('click', () => {
+    button.disabled = true;
+    button.textContent = 'Removing...';
+    button.style.backgroundColor = '#666';
+    startRemovingLinkedInConnections();
+  });
+  
+  document.body.appendChild(button);
+  console.log('Control button added to page');
+}
+
+// Initialize immediately
+createControlButton();
+
+// Also initialize on page load in case the DOM wasn't ready
+window.addEventListener('load', createControlButton);
